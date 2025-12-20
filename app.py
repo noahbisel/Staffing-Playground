@@ -5,8 +5,6 @@ import os
 
 # --- 1. APP CONFIGURATION ---
 st.set_page_config(page_title="Staffing OS", layout="wide", page_icon="👥")
-# NOTE: We keep this variable to know what to load on startup, 
-# but we will STOP writing back to it.
 DEFAULT_DATA_FILE = 'staffing_db.csv'
 
 # --- 2. UTILITY FUNCTIONS (THE ENGINE) ---
@@ -63,9 +61,6 @@ def process_uploaded_file(file):
         st.error(f"Error processing file: {e}")
         return pd.DataFrame()
 
-# REMOVED: save_to_disk function. 
-# We no longer save to the server to ensure user privacy.
-
 def recalculate_utilization(df):
     """Updates the 'Current Hours to Target' column based on allocated hours."""
     if df.empty: return df
@@ -115,8 +110,6 @@ def get_role_metrics(df, role_list):
 
 # --- 3. INIT & LOAD (READ-ONLY MODE) ---
 if 'df' not in st.session_state:
-    # Attempt to load the default "Master" CSV from the repo
-    # But we load it into MEMORY only, never writing back to it.
     if os.path.exists(DEFAULT_DATA_FILE):
         try:
             df = pd.read_csv(DEFAULT_DATA_FILE)
@@ -202,7 +195,6 @@ if page == "📊 Dashboard":
                 text='Current Hours to Target'
             )
             fig.update_traces(texttemplate='%{text}%', textposition='outside')
-            # REMOVED: The red dashed line
             fig.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0), height=350)
             st.plotly_chart(fig, use_container_width=True)
             
@@ -243,7 +235,9 @@ elif page == "✏️ Staffing Editor":
                         p_df = pd.DataFrame(row[prog_cols])
                         p_df.columns = ['Hours']
                         active = p_df[p_df['Hours'] > 0].index.tolist()
-                        to_edit = st.multiselect(f"Programs for {name}", prog_cols, default=active, key=f"sel_{name}")
+                        
+                        to_edit = st.multiselect(f"Programs for {name}", sorted(prog_cols), default=active, key=f"sel_{name}")
+                        
                         edited = st.data_editor(p_df.loc[to_edit], use_container_width=True, column_config={"Hours": st.column_config.NumberColumn(min_value=0)}, key=f"ed_{name}")
                         
                         if not edited.equals(p_df.loc[to_edit]):
@@ -264,7 +258,9 @@ elif page == "✏️ Staffing Editor":
                         t_df.columns = ['Hours']
                         if 'Role' in df.columns: t_df = t_df.join(df['Role'])
                         active = t_df[t_df['Hours'] > 0].index.tolist()
-                        to_edit = st.multiselect(f"Team for {prog}", df.index.tolist(), default=active, key=f"psel_{prog}")
+                        
+                        to_edit = st.multiselect(f"Team for {prog}", sorted(df.index.tolist()), default=active, key=f"psel_{prog}")
+                        
                         edited = st.data_editor(t_df.loc[to_edit], use_container_width=True, column_config={"Hours": st.column_config.NumberColumn(min_value=0), "Role": st.column_config.TextColumn(disabled=True)}, key=f"ped_{prog}")
                         
                         if not edited.equals(t_df.loc[to_edit]):
@@ -276,14 +272,28 @@ elif page == "✏️ Staffing Editor":
     else:
         c1, c2 = st.columns([2, 1])
         search = c1.text_input("🔍 Search", placeholder="Filter by name...")
-        df_view = df.copy()
+        
+        df_view = df.copy().sort_index()
+        
         if search:
             mask = df_view.index.astype(str).str.contains(search, case=False)
             df_view = df_view[mask]
+            
         active_progs = [c for c in prog_cols if df_view[c].sum() > 0]
-        sel_cols = st.multiselect("Active Programs (Add to view)", prog_cols, default=active_progs)
+        
+        sel_cols = st.multiselect("Active Programs (Add to view)", sorted(prog_cols), default=sorted(active_progs))
+        
         cols_to_show = [c for c in df_view.columns if c not in prog_cols] + sel_cols
-        edited = st.data_editor(df_view[cols_to_show], use_container_width=True, column_config={"Current Hours to Target": st.column_config.ProgressColumn("Util %", format="%d%%", min_value=0, max_value=100)}, disabled=['Current Hours to Target'], key="grid_main")
+        
+        edited = st.data_editor(
+            df_view[cols_to_show], 
+            use_container_width=True, 
+            column_config={"Current Hours to Target": st.column_config.ProgressColumn("Util %", format="%d%%", min_value=0, max_value=100)}, 
+            disabled=['Current Hours to Target'], 
+            key="grid_main"
+        )
         
         if not edited.equals(df_view[cols_to_show]):
-            st.session_state.df
+            st.session_state.df.update(edited)
+            st.session_state.df = recalculate_utilization(st.session_state.df)
+            st.rerun()
