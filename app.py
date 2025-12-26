@@ -7,6 +7,18 @@ import os
 st.set_page_config(page_title="Staffing OS", layout="wide", page_icon="👥")
 DEFAULT_DATA_FILE = 'staffing_db.csv'
 
+# --- CONSTANTS ---
+RATE_CARD = {
+    "ACP": 37,
+    "CP": 54,
+    "CE": 89,
+    "SCE": 119,
+    "R+I I": 44,
+    "R+I II": 56,
+    "R+I III": 89,
+    "R+I IV": 135
+}
+
 # --- 2. UTILITY FUNCTIONS ---
 
 def find_column(df, candidates):
@@ -25,8 +37,33 @@ def process_uploaded_file(file):
         df = pd.read_csv(file)
         df.columns = df.columns.str.strip()
 
-        mrr_col = find_column(df, ['Program MRR', 'MRR'])
-        if mrr_col: df = df.drop(columns=[mrr_col])
+        # 1. Capture MRR before dropping it
+        mrr_col = find_column(df, ['Program MRR', 'MRR', 'Revenue'])
+        prog_col_raw = find_column(df, ['Program Name', 'Program', 'Client'])
+        
+        new_mrr_map = {}
+        if mrr_col and prog_col_raw:
+            # Create a dictionary of Program -> MRR
+            # We take the maximum found MRR for a program to avoid duplicates/errors
+            try:
+                # cleanup currency symbols if present
+                if df[mrr_col].dtype == 'object':
+                    df[mrr_col] = df[mrr_col].astype(str).str.replace('$', '').str.replace(',', '')
+                df[mrr_col] = pd.to_numeric(df[mrr_col], errors='coerce').fillna(0)
+                
+                # Extract map
+                temp_map = df.groupby(prog_col_raw)[mrr_col].max().to_dict()
+                new_mrr_map.update(temp_map)
+            except:
+                pass
+            
+            # Now drop the column so it doesn't interfere with the pivot
+            df = df.drop(columns=[mrr_col])
+        
+        # Save extracted MRR to session state
+        if 'program_mrr' not in st.session_state:
+            st.session_state.program_mrr = {}
+        st.session_state.program_mrr.update(new_mrr_map)
 
         ct_col = find_column(df, ['CT Name', 'Employee Name', 'Employee'])
         prog_col = find_column(df, ['Program Name', 'Program', 'Client'])
@@ -66,7 +103,6 @@ def recalculate_utilization(df):
     if df.empty: return df
 
     exclude = ['Capacity', 'Current Hours to Target']
-    # Identify numeric columns that are actually programs
     prog_cols = [c for c in df.select_dtypes(include=['number']).columns if c not in exclude]
 
     total_hours = df[prog_cols].sum(axis=1)
@@ -79,6 +115,59 @@ def recalculate_utilization(df):
     df['Current Hours to Target'] = util.round(0).astype(int)
 
     return df
+
+def get_rate(role_name):
+    """Robust lookup for Rate Card."""
+    if not role_name: return 0
+    role_clean = str(role_name).strip().upper()
+    # Direct match
+    if role_clean in RATE_CARD:
+        return RATE_CARD[role_clean]
+    # Fuzzy/Embedded match (e.g. "Senior CP")
+    for key, rate in RATE_CARD.items():
+        if key in role_clean:
+            return rate
+    return 0
+
+def calculate_margin(df, program_mrr_dict):
+    """Calculates Extended Cost and Margin % for all programs."""
+    if df.empty: return {}
+    
+    exclude = ['Capacity', 'Current Hours to Target']
+    prog_cols = [c for c in df.select_dtypes(include=['number']).columns if c not in exclude]
+    
+    margin_data = {} # {Program: {'cost': X, 'margin_pct': Y}}
+    
+    # 1. Calculate Costs per Program
+    # We iterate through employees, calculate their cost contribution, and sum it up
+    program_costs = {p: 0.0 for p in prog_cols}
+    
+    for idx, row in df.iterrows():
+        role = row.get('Role', '')
+        rate = get_rate(role)
+        for prog in prog_cols:
+            hours = row.get(prog, 0)
+            cost = hours * rate
+            program_costs[prog] += cost
+            
+    # 2. Calculate Margins vs MRR
+    for prog, cost in program_costs.items():
+        mrr = program_mrr_dict.get(prog, 0)
+        margin_pct = 0.0
+        if mrr > 0:
+            margin_pct = ((mrr - cost) / mrr) * 100
+        else:
+            # If No MRR, margin is undefined or effectively negative infinite if there is cost
+            # We will display 0 or a flag if cost exists but no MRR
+            margin_pct = -100.0 if cost > 0 else 0.0
+            
+        margin_data[prog] = {
+            'mrr': mrr,
+            'cost': cost,
+            'margin_pct': margin_pct
+        }
+        
+    return margin_data
 
 def render_employee_card(name, row):
     util = row.get('Current Hours to Target', 0)
@@ -110,14 +199,28 @@ def get_role_metrics(df, role_list):
     return avg_util, unused_cap
 
 # --- 3. INIT & LOAD ---
+if 'program_mrr' not in st.session_state:
+    st.session_state.program_mrr = {}
+
 if 'df' not in st.session_state:
     if os.path.exists(DEFAULT_DATA_FILE):
         try:
             df = pd.read_csv(DEFAULT_DATA_FILE)
+            # Try to grab MRR from default file if it exists, similar to process_uploaded_file
+            mrr_col = find_column(df, ['Program MRR', 'MRR'])
+            prog_col = find_column(df, ['Program Name', 'Program'])
+            if mrr_col and prog_col:
+                try:
+                    df[mrr_col] = pd.to_numeric(df[mrr_col], errors='coerce').fillna(0)
+                    st.session_state.program_mrr = df.groupby(prog_col)[mrr_col].max().to_dict()
+                    df = df.drop(columns=[mrr_col])
+                except: pass
+            
             if 'Employee' in df.columns: df = df.set_index('Employee')
             st.session_state.df = recalculate_utilization(df)
         except: st.session_state.df = pd.DataFrame()
     else:
+        # Fallback Mock Data
         data = {
             'Employee': ['Mitch Ursick', 'Noah Bisel', 'Kevin Steger', 'Nicki Williams'],
             'Role': ['CSM', 'CE', 'CP', 'CE'],
@@ -125,16 +228,24 @@ if 'df' not in st.session_state:
             'Accenture': [10, 80, 20, 0],
             'Google': [60, 20, 60, 15]
         }
+        # Mock MRR
+        st.session_state.program_mrr = {'Accenture': 15000, 'Google': 25000}
+        
         df = pd.DataFrame(data).set_index('Employee')
         st.session_state.df = recalculate_utilization(df)
 
 # --- 4. GLOBAL CALCULATIONS ---
 df = st.session_state.df
 prog_cols = []
+margin_metrics = {}
+
 if not df.empty:
     numeric_cols = df.select_dtypes(include=['number']).columns
     exclude_cols = ['Capacity', 'Current Hours to Target']
     prog_cols = [c for c in numeric_cols if c not in exclude_cols]
+    
+    # Calculate Margins dynamically on every run
+    margin_metrics = calculate_margin(df, st.session_state.program_mrr)
 
 # --- 5. NAVIGATION ---
 st.sidebar.title("Staffing OS")
@@ -171,6 +282,7 @@ if page == "📊 Dashboard":
 
         st.divider()
 
+        # Row 1: Programs and Employees
         col_l, col_r = st.columns(2)
         with col_l:
             st.subheader("Allocations by Program")
@@ -197,7 +309,32 @@ if page == "📊 Dashboard":
             fig.update_traces(texttemplate='%{text}%', textposition='outside')
             fig.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0), height=350)
             st.plotly_chart(fig, use_container_width=True)
-
+            
+        st.divider()
+        
+        # Row 2: Contributing Margin (New)
+        st.subheader("Contributing Margin by Program")
+        if margin_metrics:
+            # Convert dict to DF for plotting
+            margin_df = pd.DataFrame.from_dict(margin_metrics, orient='index')
+            # Sort by margin_pct Descending
+            margin_df = margin_df.sort_values('margin_pct', ascending=True) # Ascending for Horizontal Bar to put highest on top
+            
+            fig_m = px.bar(
+                margin_df,
+                x='margin_pct',
+                y=margin_df.index,
+                orientation='h',
+                labels={'margin_pct': 'Margin %', 'index': 'Program'},
+                text='margin_pct'
+            )
+            # Format text as percentage
+            fig_m.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+            # Add a vertical line at 0 for visual clarity
+            fig_m.add_vline(x=0, line_color="black", line_width=1)
+            fig_m.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0), height=400)
+            st.plotly_chart(fig_m, use_container_width=True)
+            
         st.divider()
         st.subheader("Team Overview")
         t1, t2, t3 = st.columns(3)
@@ -226,42 +363,67 @@ elif page == "✏️ Staffing Editor":
     if view == "Profile View (Detail)":
         focus = st.radio("Focus:", ["People", "Programs"], horizontal=True, label_visibility="collapsed")
         if focus == "People":
-            # CASE INSENSITIVE SORT
             sel_emps = st.multiselect("Select Employees", sorted(df.index.astype(str), key=str.casefold), placeholder="Select people to edit...")
             if sel_emps:
                 for name in sel_emps:
                     if name in df.index:
                         render_employee_card(name, df.loc[name])
                         row = df.loc[name]
+                        
+                        # Prepare Editor Data
                         p_df = pd.DataFrame(row[prog_cols])
                         p_df.columns = ['Hours']
+                        
+                        # Add Margin Column (Lookup from pre-calculated metrics)
+                        # We want the margin of the Program, not the person
+                        p_df['Margin %'] = p_df.index.map(lambda x: margin_metrics.get(x, {}).get('margin_pct', 0.0))
+                        
                         active = p_df[p_df['Hours'] > 0].index.tolist()
                         
-                        # CASE INSENSITIVE SORT
                         to_edit = st.multiselect(f"Programs for {name}", sorted(prog_cols, key=str.casefold), default=active, key=f"sel_{name}")
                         
-                        edited = st.data_editor(p_df.loc[to_edit], use_container_width=True, column_config={"Hours": st.column_config.NumberColumn(min_value=0)}, key=f"ed_{name}")
+                        # Configure columns: Hours is editable, Margin is Read-only and formatted
+                        edited = st.data_editor(
+                            p_df.loc[to_edit], 
+                            use_container_width=True, 
+                            column_config={
+                                "Hours": st.column_config.NumberColumn(min_value=0),
+                                "Margin %": st.column_config.NumberColumn(format="%.1f%%", disabled=True)
+                            }, 
+                            key=f"ed_{name}"
+                        )
 
-                        if not edited.equals(p_df.loc[to_edit]):
+                        if not edited['Hours'].equals(p_df.loc[to_edit, 'Hours']):
                             for prog, r in edited.iterrows():
                                 st.session_state.df.at[name, prog] = r['Hours']
                             st.session_state.df = recalculate_utilization(st.session_state.df)
                             st.rerun()
         else:
-            # CASE INSENSITIVE SORT
             sel_progs = st.multiselect("Select Programs", sorted(prog_cols, key=str.casefold), placeholder="Select programs...")
             if sel_progs:
                 for prog in sel_progs:
                     total = df[prog].sum()
+                    
+                    # Get Margin Data
+                    m_data = margin_metrics.get(prog, {})
+                    margin_pct = m_data.get('margin_pct', 0)
+                    cost = m_data.get('cost', 0)
+                    mrr = m_data.get('mrr', 0)
+                    
+                    color = "green" if margin_pct > 30 else "orange" if margin_pct > 0 else "red"
+                    
                     with st.container(border=True):
-                        st.subheader(prog)
-                        st.metric("Total Hours", f"{total} hrs")
+                        st.subheader(f"{prog} (MRR: ${mrr:,.0f})")
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Total Hours", f"{total} hrs")
+                        c2.metric("Extended Cost", f"${cost:,.0f}")
+                        c3.metric("Contr. Margin", f"{margin_pct:.1f}%", delta_color="normal")
+                        
                         t_df = pd.DataFrame(df[prog])
                         t_df.columns = ['Hours']
                         if 'Role' in df.columns: t_df = t_df.join(df['Role'])
                         active = t_df[t_df['Hours'] > 0].index.tolist()
                         
-                        # CASE INSENSITIVE SORT
                         to_edit = st.multiselect(f"Team for {prog}", sorted(df.index.tolist(), key=str.casefold), default=active, key=f"psel_{prog}")
                         
                         edited = st.data_editor(t_df.loc[to_edit], use_container_width=True, column_config={"Hours": st.column_config.NumberColumn(min_value=0), "Role": st.column_config.TextColumn(disabled=True)}, key=f"ped_{prog}")
@@ -275,7 +437,6 @@ elif page == "✏️ Staffing Editor":
         c1, c2 = st.columns([2, 1])
         search = c1.text_input("🔍 Search", placeholder="Filter by name...")
         
-        # CASE INSENSITIVE SORT for Grid View
         df_view = df.copy().sort_index(key=lambda x: x.str.lower())
         
         if search:
@@ -283,7 +444,6 @@ elif page == "✏️ Staffing Editor":
             df_view = df_view[mask]
         active_progs = [c for c in prog_cols if df_view[c].sum() > 0]
         
-        # CASE INSENSITIVE SORT
         sel_cols = st.multiselect("Active Programs (Add to view)", sorted(prog_cols, key=str.casefold), default=sorted(active_progs, key=str.casefold))
         
         cols_to_show = [c for c in df_view.columns if c not in prog_cols] + sel_cols
@@ -336,13 +496,11 @@ elif page == "⚙️ Settings":
                         st.rerun()
         with c2:
             st.subheader("Delete Employee")
-            # CASE INSENSITIVE SORT
             all_emps = sorted(st.session_state.df.index.tolist(), key=str.casefold)
             del_emp = st.selectbox("Select Employee", ["Select..."] + all_emps)
             if st.button("Delete Employee", type="primary"):
                 if del_emp != "Select...":
                     st.session_state.df = st.session_state.df.drop(index=[del_emp])
-                    # Recalculate metrics immediately after deletion
                     st.session_state.df = recalculate_utilization(st.session_state.df)
                     st.rerun()
                     
@@ -351,17 +509,24 @@ elif page == "⚙️ Settings":
         with c1:
             st.subheader("Add Program")
             n_prog = st.text_input("New Program Name")
+            # Added MRR Input here
+            mrr_input = st.number_input("Program MRR ($)", min_value=0, value=0, step=1000)
+            
             if st.button("Add Program"):
                 if n_prog and n_prog not in st.session_state.df.columns:
                     st.session_state.df[n_prog] = 0
+                    # Save the manual MRR
+                    st.session_state.program_mrr[n_prog] = mrr_input
                     st.session_state.df = recalculate_utilization(st.session_state.df)
                     st.rerun()
         with c2:
             st.subheader("Delete Program")
-            # CASE INSENSITIVE SORT
             del_prog = st.selectbox("Select Program", ["Select..."] + sorted(prog_cols, key=str.casefold))
             if st.button("Delete Program", type="primary"):
                 if del_prog != "Select...":
                     st.session_state.df = st.session_state.df.drop(columns=[del_prog])
+                    # Remove from MRR dict to keep clean
+                    if del_prog in st.session_state.program_mrr:
+                        del st.session_state.program_mrr[del_prog]
                     st.session_state.df = recalculate_utilization(st.session_state.df)
                     st.rerun()
