@@ -378,6 +378,7 @@ elif page == "✏️ Staffing Editor":
         if focus == "People":
             all_emps = sorted(df.index.astype(str), key=str.casefold)
             
+            # --- FILTER LOGIC: EXCLUDE IF ROLE STARTS WITH "R+I" ---
             filtered_emps = [
                 e for e in all_emps 
                 if not str(df.loc[e, 'Role']).strip().upper().startswith("R+I")
