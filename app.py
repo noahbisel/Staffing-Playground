@@ -214,7 +214,7 @@ def undo_last_change():
         st.toast("Undid last change", icon="↩️")
 
 # --- 5. NAVIGATION & PAGES ---
-st.sidebar.title("Staffing OS")
+st.sidebar.title("Staffing Sandbox")
 page = st.sidebar.radio("Navigate", ["📊 Dashboard", "✏️ Staffing Editor", "⚙️ Settings"], label_visibility="collapsed")
 st.sidebar.markdown("---")
 
@@ -262,8 +262,7 @@ if page == "📊 Dashboard":
         
         # --- LEFT: ALLOCATIONS BY PROGRAM (Unaffected by Toggles) ---
         with col_l:
-            # SPACERS: Increased to 4 lines to match the height of toggles on the right
-            st.write("")
+            # SPACERS: Reduced to 3 lines for better alignment
             st.write("")
             st.write("")
             st.write("")
