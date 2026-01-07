@@ -2,6 +2,8 @@ import pandas as pd
 import streamlit as st
 
 # --- CONSTANTS ---
+STANDARD_CAPACITY = 152
+
 RATE_CARD = {
     "ACP": 37, 
     "CP": 54, 
@@ -90,7 +92,8 @@ def recalculate_utilization(df):
 
     if 'Capacity' not in df.columns:
         col_idx = 1 if 'Role' in df.columns else 0
-        df.insert(col_idx, 'Capacity', 152)
+        # Use the Constant
+        df.insert(col_idx, 'Capacity', STANDARD_CAPACITY)
 
     util = df.apply(lambda x: (total_hours[x.name] / x['Capacity'] * 100) if x['Capacity'] > 0 else 0, axis=1)
     df['Current Hours to Target'] = util.round(0).astype(int)
@@ -133,7 +136,7 @@ def calculate_margin(df, program_mrr_dict):
 
 def calculate_group_utilization(df, role_list):
     """
-    New Math: Total Hours / (Count of Employees * 152)
+    New Math: Total Hours / (Count of Employees * STANDARD_CAPACITY)
     Filters DF for the specific role list before calculating.
     """
     if 'Role' not in df.columns or df.empty:
@@ -150,7 +153,9 @@ def calculate_group_utilization(df, role_list):
     
     total_allocated_hours = role_df[prog_cols].sum().sum()
     count_employees = len(role_df)
-    total_capacity = count_employees * 152
+    
+    # Use the Constant
+    total_capacity = count_employees * STANDARD_CAPACITY
     
     utilization_pct = 0
     if total_capacity > 0:
