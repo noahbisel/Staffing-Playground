@@ -120,8 +120,8 @@ if page == "📊 Dashboard":
             st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
             st.metric("CP/SCP/LCP Unused Cap", f"{int(cp_unused)} hrs")
         with m4:
-            st.metric("ACE/CE/SCE Util", f"{ce_util:.0f}%")
-            st.metric("ACE/CE/SCE Unused", f"{int(ce_unused)} hrs")
+            st.metric("ACE/CE/SCE Utilization", f"{ce_util:.0f}%")
+            st.metric("ACE/CE/SCE Unused Cap", f"{int(ce_unused)} hrs")
 
         st.divider()
 
