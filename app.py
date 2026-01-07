@@ -32,11 +32,12 @@ if 'df' not in st.session_state:
             st.session_state.df = utils.recalculate_utilization(df)
         except: st.session_state.df = pd.DataFrame()
     else:
-        # Fallback Mock Data
+        # Fallback Mock Data - Using utils.STANDARD_CAPACITY
+        cap = utils.STANDARD_CAPACITY
         data = {
             'Employee': ['Mitch Ursick', 'Noah Bisel', 'Kevin Steger', 'Nicki Williams', 'R+I I (Placeholder)'],
             'Role': ['CSM', 'CE', 'CP', 'CE', 'R+I I'],
-            'Capacity': [152, 152, 152, 152, 152],
+            'Capacity': [cap, cap, cap, cap, cap],
             'Accenture': [10, 80, 20, 0, 0],
             'Google': [60, 20, 60, 15, 40]
         }
@@ -90,18 +91,14 @@ if page == "📊 Dashboard":
 
     if not df.empty:
         # --- TOP METRICS ---
-        # 1. Team Avg (Includes LCP via utils.TEAM_ROLES)
         team_util, team_alloc, team_cap = utils.calculate_group_utilization(df, utils.TEAM_ROLES)
         
-        # 2. ACP
         acp_util, acp_alloc, acp_cap = utils.calculate_group_utilization(df, ['ACP'])
         acp_unused = acp_cap - acp_alloc
         
-        # 3. CP / SCP / LCP (UPDATED)
         cp_util, cp_alloc, cp_cap = utils.calculate_group_utilization(df, ['CP', 'SCP', 'LCP'])
         cp_unused = cp_cap - cp_alloc
         
-        # 4. ACE / CE / SCE
         ce_util, ce_alloc, ce_cap = utils.calculate_group_utilization(df, ['ACE', 'CE', 'SCE'])
         ce_unused = ce_cap - ce_alloc
 
@@ -120,7 +117,6 @@ if page == "📊 Dashboard":
             st.metric("ACP Utilization", f"{acp_util:.0f}%")
             st.metric("ACP Unused Cap", f"{int(acp_unused)} hrs")
         with m3:
-            # UPDATED LABEL
             st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
             st.metric("CP/SCP/LCP Unused Cap", f"{int(cp_unused)} hrs")
         with m4:
@@ -226,7 +222,6 @@ if page == "📊 Dashboard":
                             render_employee_card(name, row)
                 else: st.warning("No Role data.")
         render_role_column(t1, "ACP", ['ACP'])
-        # UPDATED COLUMN
         render_role_column(t2, "CP / SCP / LCP", ['CP', 'SCP', 'LCP'])
         render_role_column(t3, "ACE / CE / SCE", ['ACE', 'CE', 'SCE'])
 
@@ -369,7 +364,8 @@ elif page == "⚙️ Settings":
                         push_to_history()
                         new_row = {c:0 for c in st.session_state.df.columns}
                         new_row['Role'] = r
-                        new_row['Capacity'] = 152
+                        # Use the Constant
+                        new_row['Capacity'] = utils.STANDARD_CAPACITY
                         st.session_state.df.loc[n] = pd.Series(new_row)
                         st.session_state.df = utils.recalculate_utilization(st.session_state.df)
                         st.rerun()
