@@ -3,12 +3,19 @@ import streamlit as st
 
 # --- CONSTANTS ---
 RATE_CARD = {
-    "ACP": 37, "CP": 54, "CE": 89, "SCE": 119,
-    "R+I I": 44, "R+I II": 56, "R+I III": 89, "R+I IV": 135
+    "ACP": 37, 
+    "CP": 54, 
+    "CE": 89, 
+    "SCE": 119,
+    "LCP": 89,
+    "R+I I": 44, 
+    "R+I II": 56, 
+    "R+I III": 89, 
+    "R+I IV": 135
 }
 
-# The specific roles that count toward "Team Average"
-TEAM_ROLES = ['ACP', 'CP', 'SCP', 'ACE', 'CE', 'SCE']
+# Roles that contribute to the "Team Avg Utilization" metric
+TEAM_ROLES = ['ACP', 'CP', 'SCP', 'LCP', 'ACE', 'CE', 'SCE']
 
 def find_column(df, candidates):
     """Robustly finds a column name from a list of candidates (case-insensitive)."""
@@ -26,7 +33,6 @@ def process_uploaded_file(file):
         df = pd.read_csv(file)
         df.columns = df.columns.str.strip()
 
-        # Capture MRR before dropping it
         mrr_col = find_column(df, ['Program MRR', 'MRR', 'Revenue'])
         prog_col_raw = find_column(df, ['Program Name', 'Program', 'Client'])
         
@@ -131,27 +137,21 @@ def calculate_group_utilization(df, role_list):
     Filters DF for the specific role list before calculating.
     """
     if 'Role' not in df.columns or df.empty:
-        return 0, 0, 0 # util, total_alloc, total_cap
+        return 0, 0, 0 
 
-    # Filter for the specific roles
     mask = df['Role'].astype(str).str.upper().isin([r.upper() for r in role_list])
     role_df = df[mask]
     
     if role_df.empty:
         return 0, 0, 0
 
-    # Identify Program Columns (numeric columns that aren't metadata)
     exclude = ['Capacity', 'Current Hours to Target']
     prog_cols = [c for c in role_df.select_dtypes(include=['number']).columns if c not in exclude]
     
-    # 1. Total Allocated Hours
     total_allocated_hours = role_df[prog_cols].sum().sum()
-    
-    # 2. Total Capacity (Count of Employees * 152)
     count_employees = len(role_df)
     total_capacity = count_employees * 152
     
-    # 3. Utilization %
     utilization_pct = 0
     if total_capacity > 0:
         utilization_pct = (total_allocated_hours / total_capacity) * 100
