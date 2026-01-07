@@ -6,10 +6,12 @@ STANDARD_CAPACITY = 152
 
 RATE_CARD = {
     "ACP": 37, 
-    "CP": 54, 
+    "CP": 54,
+    "SCP": 54,
+    "LCP": 89,
+    "ACE":89,
     "CE": 89, 
     "SCE": 119,
-    "LCP": 89,
     "R+I I": 44, 
     "R+I II": 56, 
     "R+I III": 89, 
