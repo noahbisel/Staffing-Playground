@@ -6,9 +6,8 @@ import utils
 
 # --- 1. APP CONFIGURATION ---
 st.set_page_config(page_title="Staffing Sandbox", layout="wide", page_icon="👥")
-DEFAULT_DATA_FILE = 'staffing_db.csv'
 
-# --- 2. INIT & LOAD ---
+# --- 2. INIT & LOAD (CLEAN SLATE) ---
 if 'program_mrr' not in st.session_state:
     st.session_state.program_mrr = {}
 
@@ -16,34 +15,8 @@ if 'undo_stack' not in st.session_state:
     st.session_state.undo_stack = []
 
 if 'df' not in st.session_state:
-    if os.path.exists(DEFAULT_DATA_FILE):
-        try:
-            df = pd.read_csv(DEFAULT_DATA_FILE)
-            mrr_col = utils.find_column(df, ['Program MRR', 'MRR'])
-            prog_col = utils.find_column(df, ['Program Name', 'Program'])
-            if mrr_col and prog_col:
-                try:
-                    df[mrr_col] = pd.to_numeric(df[mrr_col], errors='coerce').fillna(0)
-                    st.session_state.program_mrr = df.groupby(prog_col)[mrr_col].max().to_dict()
-                    df = df.drop(columns=[mrr_col])
-                except: pass
-            
-            if 'Employee' in df.columns: df = df.set_index('Employee')
-            st.session_state.df = utils.recalculate_utilization(df)
-        except: st.session_state.df = pd.DataFrame()
-    else:
-        # Fallback Mock Data - Using utils.STANDARD_CAPACITY
-        cap = utils.STANDARD_CAPACITY
-        data = {
-            'Employee': ['Mitch Ursick', 'Noah Bisel', 'Kevin Steger', 'Nicki Williams', 'R+I I (Placeholder)'],
-            'Role': ['CSM', 'CE', 'CP', 'CE', 'R+I I'],
-            'Capacity': [cap, cap, cap, cap, cap],
-            'Accenture': [10, 80, 20, 0, 0],
-            'Google': [60, 20, 60, 15, 40]
-        }
-        st.session_state.program_mrr = {'Accenture': 15000, 'Google': 25000}
-        df = pd.DataFrame(data).set_index('Employee')
-        st.session_state.df = utils.recalculate_utilization(df)
+    # START EMPTY - No Mock Data, No Default CSV auto-load
+    st.session_state.df = pd.DataFrame()
 
 # --- 3. GLOBAL VARIABLES ---
 df = st.session_state.df
@@ -92,36 +65,18 @@ if page == "📊 Dashboard":
     if not df.empty:
         # --- TOP METRICS ---
         team_util, team_alloc, team_cap = utils.calculate_group_utilization(df, utils.TEAM_ROLES)
-        
         acp_util, acp_alloc, acp_cap = utils.calculate_group_utilization(df, ['ACP'])
-        acp_unused = acp_cap - acp_alloc
-        
         cp_util, cp_alloc, cp_cap = utils.calculate_group_utilization(df, ['CP', 'SCP', 'LCP'])
-        cp_unused = cp_cap - cp_alloc
-        
         ce_util, ce_alloc, ce_cap = utils.calculate_group_utilization(df, ['ACE', 'CE', 'SCE'])
-        ce_unused = ce_cap - ce_alloc
 
         m1, m2, m3, m4 = st.columns(4)
-        
         with m1:
             with st.container(border=True):
-                st.metric(
-                    "Team Avg Utilization", 
-                    f"{team_util:.0f}%", 
-                    delta=f"{team_util-100:.0f}%" if team_util > 100 else None
-                )
+                st.metric("Team Avg Utilization", f"{team_util:.0f}%", delta=f"{team_util-100:.0f}%" if team_util > 100 else None)
                 st.caption(f"**Allocated:** {int(team_alloc)} hrs  \n**Capacity:** {int(team_cap)} hrs")
-                
-        with m2:
-            st.metric("ACP Utilization", f"{acp_util:.0f}%")
-            st.metric("ACP Unused Cap", f"{int(acp_unused)} hrs")
-        with m3:
-            st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
-            st.metric("CP/SCP/LCP Unused Cap", f"{int(cp_unused)} hrs")
-        with m4:
-            st.metric("ACE/CE/SCE Utilization", f"{ce_util:.0f}%")
-            st.metric("ACE/CE/SCE Unused Cap", f"{int(ce_unused)} hrs")
+        with m2: st.metric("ACP Utilization", f"{acp_util:.0f}%")
+        with m3: st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
+        with m4: st.metric("ACE/CE/SCE Util", f"{ce_util:.0f}%")
 
         st.divider()
 
@@ -135,7 +90,6 @@ if page == "📊 Dashboard":
             st.subheader("Allocations by Program")
             
             program_analysis_df = df.copy() 
-            
             if prog_cols:
                 dynamic_margin = utils.calculate_margin(program_analysis_df, st.session_state.program_mrr)
                 master_data = []
@@ -144,31 +98,17 @@ if page == "📊 Dashboard":
                     if p_hours > 0:
                         m_data = dynamic_margin.get(p, {})
                         mrr_val = m_data.get('mrr', 0)
-                        
                         master_data.append({
                             "Program Name": p,
                             "Program MRR": f"${mrr_val:,.0f}", 
                             "Total Hours": int(p_hours),
                             "Contributing Margin": m_data.get('margin_pct', 0)
                         })
-                
                 master_df = pd.DataFrame(master_data)
-                
                 if not master_df.empty:
                     master_df = master_df.sort_values("Contributing Margin", ascending=False)
-                    st.dataframe(
-                        master_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Program Name": st.column_config.TextColumn("Program Name"),
-                            "Program MRR": st.column_config.TextColumn("Program MRR"),
-                            "Total Hours": st.column_config.NumberColumn("Total Hours", format="%d"),
-                            "Contributing Margin": st.column_config.NumberColumn("Contributing Margin", format="%.1f%%")
-                        }
-                    )
-                else:
-                    st.info("No active programs found.")
+                    st.dataframe(master_df, use_container_width=True, hide_index=True, column_config={"Program Name": st.column_config.TextColumn("Program Name"), "Program MRR": st.column_config.TextColumn("Program MRR"), "Total Hours": st.column_config.NumberColumn("Total Hours", format="%d"), "Contributing Margin": st.column_config.NumberColumn("Contributing Margin", format="%.1f%%")})
+                else: st.info("No active programs found.")
 
         # --- RIGHT: ALLOCATIONS BY EMPLOYEE ---
         with col_r:
@@ -183,7 +123,6 @@ if page == "📊 Dashboard":
                 if not include_ri:
                     mask = ~emp_view_df['Role'].astype(str).str.upper().str.startswith("R+I")
                     emp_view_df = emp_view_df[mask]
-                
                 if not include_csm:
                     mask = emp_view_df['Role'].astype(str).str.upper() != "CSM"
                     emp_view_df = emp_view_df[mask]
@@ -192,20 +131,7 @@ if page == "📊 Dashboard":
             emp_table_df = emp_sorted[['Current Hours to Target']].reset_index()
             emp_table_df.columns = ['Employee', 'Utilization']
             
-            st.dataframe(
-                emp_table_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Employee": st.column_config.TextColumn("Employee"),
-                    "Utilization": st.column_config.ProgressColumn(
-                        "Utilization %", 
-                        format="%d%%", 
-                        min_value=0, 
-                        max_value=100
-                    )
-                }
-            )
+            st.dataframe(emp_table_df, use_container_width=True, hide_index=True, column_config={"Employee": st.column_config.TextColumn("Employee"), "Utilization": st.column_config.ProgressColumn("Utilization %", format="%d%%", min_value=0, max_value=100)})
             
         st.divider()
         st.subheader("Team Overview")
@@ -224,109 +150,126 @@ if page == "📊 Dashboard":
         render_role_column(t1, "ACP", ['ACP'])
         render_role_column(t2, "CP / SCP / LCP", ['CP', 'SCP', 'LCP'])
         render_role_column(t3, "ACE / CE / SCE", ['ACE', 'CE', 'SCE'])
+    else:
+        # --- EMPTY STATE INSTRUCTIONS ---
+        st.info("👋 Welcome to the Staffing Sandbox! To begin, please import your data.")
+        
+        st.markdown("""
+        ### How to get started:
+        1. Click **⚙️ Settings** in the sidebar.
+        2. Go to the **Data Import** tab.
+        3. Upload your staffing CSV file.
+        """)
+        
+        if st.button("Go to Settings", type="primary"):
+            # A simple workaround to prompt user action or could be a direct link if deployed
+            st.write("👈 Click 'Settings' in the left sidebar.")
 
 # --- PAGE: EDITOR ---
 elif page == "✏️ Staffing Editor":
-    c_title, c_undo = st.columns([5, 1])
-    c_title.title("✏️ Staffing Editor")
-    if st.session_state.undo_stack:
-        if c_undo.button("↩️ Undo", type="primary"):
-            undo_last_change()
-            st.rerun()
+    if df.empty:
+        st.title("✏️ Staffing Editor")
+        st.warning("⚠️ No data loaded. Please go to Settings to import your CSV.")
     else:
-        c_undo.button("↩️ Undo", disabled=True)
-
-    view = st.radio("View:", ["Profile View (Detail)", "Grid View (Spreadsheet)"], horizontal=True)
-    st.divider()
-
-    if view == "Profile View (Detail)":
-        focus = st.radio("Focus:", ["People", "Programs"], horizontal=True, label_visibility="collapsed")
-        
-        if focus == "People":
-            all_emps = sorted(df.index.astype(str), key=str.casefold)
-            filtered_emps = [e for e in all_emps if not str(df.loc[e, 'Role']).strip().upper().startswith("R+I")]
-            sel_emps = st.multiselect("Select Employees", filtered_emps, placeholder="Select people to edit...")
-            
-            if sel_emps:
-                for name in sel_emps:
-                    if name in df.index:
-                        render_employee_card(name, df.loc[name])
-                        row = df.loc[name]
-                        p_df = pd.DataFrame(row[prog_cols])
-                        p_df.columns = ['Hours']
-                        p_df['Margin %'] = p_df.index.map(lambda x: margin_metrics.get(x, {}).get('margin_pct', 0.0))
-                        active = p_df[p_df['Hours'] > 0].index.tolist()
-                        to_edit = st.multiselect(f"Programs for {name}", sorted(prog_cols, key=str.casefold), default=active, key=f"sel_{name}")
-                        
-                        edited = st.data_editor(
-                            p_df.loc[to_edit], use_container_width=True, 
-                            column_config={
-                                "Hours": st.column_config.NumberColumn(min_value=0),
-                                "Margin %": st.column_config.NumberColumn(format="%.1f%%", disabled=True)
-                            }, key=f"ed_{name}"
-                        )
-                        if not edited['Hours'].equals(p_df.loc[to_edit, 'Hours']):
-                            push_to_history()
-                            for prog, r in edited.iterrows():
-                                st.session_state.df.at[name, prog] = r['Hours']
-                            st.session_state.df = utils.recalculate_utilization(st.session_state.df)
-                            st.rerun()
-
+        c_title, c_undo = st.columns([5, 1])
+        c_title.title("✏️ Staffing Editor")
+        if st.session_state.undo_stack:
+            if c_undo.button("↩️ Undo", type="primary"):
+                undo_last_change()
+                st.rerun()
         else:
-            sel_progs = st.multiselect("Select Programs", sorted(prog_cols, key=str.casefold), placeholder="Select programs...")
-            if sel_progs:
-                for prog in sel_progs:
-                    total = df[prog].sum()
-                    m_data = margin_metrics.get(prog, {})
-                    margin_pct_disp = m_data.get('margin_pct', 0)
-                    mrr = m_data.get('mrr', 0)
-                    with st.container(border=True):
-                        st.subheader(f"{prog} (MRR: ${mrr:,.0f})")
-                        c1, c2 = st.columns(2)
-                        c1.metric("Total Hours", f"{total} hrs")
-                        c2.metric("Contr. Margin", f"{margin_pct_disp:.1f}%", delta_color="normal")
-                        
-                        t_df = pd.DataFrame(df[prog])
-                        t_df.columns = ['Hours']
-                        if 'Role' in df.columns: t_df = t_df.join(df['Role'])
-                        active = t_df[t_df['Hours'] > 0].index.tolist()
-                        to_edit = st.multiselect(f"Team for {prog}", sorted(df.index.tolist(), key=str.casefold), default=active, key=f"psel_{prog}")
-                        
-                        edited = st.data_editor(
-                            t_df.loc[to_edit], use_container_width=True, 
-                            column_config={
-                                "Hours": st.column_config.NumberColumn(min_value=0), 
-                                "Role": st.column_config.TextColumn(disabled=True)
-                            }, key=f"ped_{prog}"
-                        )
-                        if not edited.equals(t_df.loc[to_edit]):
-                            push_to_history()
-                            for emp, r in edited.iterrows():
-                                st.session_state.df.at[emp, prog] = r['Hours']
-                            st.session_state.df = utils.recalculate_utilization(st.session_state.df)
-                            st.rerun()
-    else:
-        # GRID
-        c1, c2 = st.columns([2, 1])
-        search = c1.text_input("🔍 Search", placeholder="Filter by name...")
-        df_view = df.copy().sort_index(key=lambda x: x.str.lower())
-        if search:
-            mask = df_view.index.astype(str).str.contains(search, case=False)
-            df_view = df_view[mask]
-        active_progs = [c for c in prog_cols if df_view[c].sum() > 0]
-        sel_cols = st.multiselect("Active Programs (Add to view)", sorted(prog_cols, key=str.casefold), default=sorted(active_progs, key=str.casefold))
-        cols_to_show = [c for c in df_view.columns if c not in prog_cols] + sel_cols
-        
-        edited = st.data_editor(
-            df_view[cols_to_show], use_container_width=True, 
-            column_config={"Current Hours to Target": st.column_config.ProgressColumn("Util %", format="%d%%", min_value=0, max_value=100)}, 
-            disabled=['Current Hours to Target'], key="grid_main"
-        )
-        if not edited.equals(df_view[cols_to_show]):
-            push_to_history()
-            st.session_state.df.update(edited)
-            st.session_state.df = utils.recalculate_utilization(st.session_state.df)
-            st.rerun()
+            c_undo.button("↩️ Undo", disabled=True)
+
+        view = st.radio("View:", ["Profile View (Detail)", "Grid View (Spreadsheet)"], horizontal=True)
+        st.divider()
+
+        if view == "Profile View (Detail)":
+            focus = st.radio("Focus:", ["People", "Programs"], horizontal=True, label_visibility="collapsed")
+            
+            if focus == "People":
+                all_emps = sorted(df.index.astype(str), key=str.casefold)
+                filtered_emps = [e for e in all_emps if not str(df.loc[e, 'Role']).strip().upper().startswith("R+I")]
+                sel_emps = st.multiselect("Select Employees", filtered_emps, placeholder="Select people to edit...")
+                
+                if sel_emps:
+                    for name in sel_emps:
+                        if name in df.index:
+                            render_employee_card(name, df.loc[name])
+                            row = df.loc[name]
+                            p_df = pd.DataFrame(row[prog_cols])
+                            p_df.columns = ['Hours']
+                            p_df['Margin %'] = p_df.index.map(lambda x: margin_metrics.get(x, {}).get('margin_pct', 0.0))
+                            active = p_df[p_df['Hours'] > 0].index.tolist()
+                            to_edit = st.multiselect(f"Programs for {name}", sorted(prog_cols, key=str.casefold), default=active, key=f"sel_{name}")
+                            
+                            edited = st.data_editor(
+                                p_df.loc[to_edit], use_container_width=True, 
+                                column_config={
+                                    "Hours": st.column_config.NumberColumn(min_value=0),
+                                    "Margin %": st.column_config.NumberColumn(format="%.1f%%", disabled=True)
+                                }, key=f"ed_{name}"
+                            )
+                            if not edited['Hours'].equals(p_df.loc[to_edit, 'Hours']):
+                                push_to_history()
+                                for prog, r in edited.iterrows():
+                                    st.session_state.df.at[name, prog] = r['Hours']
+                                st.session_state.df = utils.recalculate_utilization(st.session_state.df)
+                                st.rerun()
+
+            else:
+                sel_progs = st.multiselect("Select Programs", sorted(prog_cols, key=str.casefold), placeholder="Select programs...")
+                if sel_progs:
+                    for prog in sel_progs:
+                        total = df[prog].sum()
+                        m_data = margin_metrics.get(prog, {})
+                        margin_pct_disp = m_data.get('margin_pct', 0)
+                        mrr = m_data.get('mrr', 0)
+                        with st.container(border=True):
+                            st.subheader(f"{prog} (MRR: ${mrr:,.0f})")
+                            c1, c2 = st.columns(2)
+                            c1.metric("Total Hours", f"{total} hrs")
+                            c2.metric("Contr. Margin", f"{margin_pct_disp:.1f}%", delta_color="normal")
+                            
+                            t_df = pd.DataFrame(df[prog])
+                            t_df.columns = ['Hours']
+                            if 'Role' in df.columns: t_df = t_df.join(df['Role'])
+                            active = t_df[t_df['Hours'] > 0].index.tolist()
+                            to_edit = st.multiselect(f"Team for {prog}", sorted(df.index.tolist(), key=str.casefold), default=active, key=f"psel_{prog}")
+                            
+                            edited = st.data_editor(
+                                t_df.loc[to_edit], use_container_width=True, 
+                                column_config={
+                                    "Hours": st.column_config.NumberColumn(min_value=0), 
+                                    "Role": st.column_config.TextColumn(disabled=True)
+                                }, key=f"ped_{prog}"
+                            )
+                            if not edited.equals(t_df.loc[to_edit]):
+                                push_to_history()
+                                for emp, r in edited.iterrows():
+                                    st.session_state.df.at[emp, prog] = r['Hours']
+                                st.session_state.df = utils.recalculate_utilization(st.session_state.df)
+                                st.rerun()
+        else:
+            c1, c2 = st.columns([2, 1])
+            search = c1.text_input("🔍 Search", placeholder="Filter by name...")
+            df_view = df.copy().sort_index(key=lambda x: x.str.lower())
+            if search:
+                mask = df_view.index.astype(str).str.contains(search, case=False)
+                df_view = df_view[mask]
+            active_progs = [c for c in prog_cols if df_view[c].sum() > 0]
+            sel_cols = st.multiselect("Active Programs (Add to view)", sorted(prog_cols, key=str.casefold), default=sorted(active_progs, key=str.casefold))
+            cols_to_show = [c for c in df_view.columns if c not in prog_cols] + sel_cols
+            
+            edited = st.data_editor(
+                df_view[cols_to_show], use_container_width=True, 
+                column_config={"Current Hours to Target": st.column_config.ProgressColumn("Util %", format="%d%%", min_value=0, max_value=100)}, 
+                disabled=['Current Hours to Target'], key="grid_main"
+            )
+            if not edited.equals(df_view[cols_to_show]):
+                push_to_history()
+                st.session_state.df.update(edited)
+                st.session_state.df = utils.recalculate_utilization(st.session_state.df)
+                st.rerun()
 
 # --- PAGE: SETTINGS ---
 elif page == "⚙️ Settings":
@@ -348,59 +291,64 @@ elif page == "⚙️ Settings":
                     st.session_state.last_processed = up_file.name
                     st.success("Data loaded for this session!")
                     st.rerun()
-        if st.button("⚠️ Reset to Default", type="primary"):
+        if st.button("⚠️ Reset to Default (Clear Data)", type="primary"):
             st.session_state.clear()
             st.rerun()
 
     with t2:
-        c1, c2 = st.columns(2)
-        with c1:
-            with st.form("new_emp"):
-                st.subheader("Add Employee")
-                n = st.text_input("Name")
-                r = st.selectbox("Role", list(utils.RATE_CARD.keys()))
-                if st.form_submit_button("Add"):
-                    if n and n not in st.session_state.df.index:
+        if df.empty:
+            st.warning("Please import data first.")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                with st.form("new_emp"):
+                    st.subheader("Add Employee")
+                    n = st.text_input("Name")
+                    r = st.selectbox("Role", list(utils.RATE_CARD.keys()))
+                    if st.form_submit_button("Add"):
+                        if n and n not in st.session_state.df.index:
+                            push_to_history()
+                            new_row = {c:0 for c in st.session_state.df.columns}
+                            new_row['Role'] = r
+                            new_row['Capacity'] = utils.STANDARD_CAPACITY
+                            st.session_state.df.loc[n] = pd.Series(new_row)
+                            st.session_state.df = utils.recalculate_utilization(st.session_state.df)
+                            st.rerun()
+            with c2:
+                st.subheader("Delete Employee")
+                all_emps = sorted(st.session_state.df.index.tolist(), key=str.casefold)
+                del_emp = st.selectbox("Select Employee", ["Select..."] + all_emps)
+                if st.button("Delete Employee", type="primary"):
+                    if del_emp != "Select...":
                         push_to_history()
-                        new_row = {c:0 for c in st.session_state.df.columns}
-                        new_row['Role'] = r
-                        # Use the Constant
-                        new_row['Capacity'] = utils.STANDARD_CAPACITY
-                        st.session_state.df.loc[n] = pd.Series(new_row)
+                        st.session_state.df = st.session_state.df.drop(index=[del_emp])
                         st.session_state.df = utils.recalculate_utilization(st.session_state.df)
                         st.rerun()
-        with c2:
-            st.subheader("Delete Employee")
-            all_emps = sorted(st.session_state.df.index.tolist(), key=str.casefold)
-            del_emp = st.selectbox("Select Employee", ["Select..."] + all_emps)
-            if st.button("Delete Employee", type="primary"):
-                if del_emp != "Select...":
-                    push_to_history()
-                    st.session_state.df = st.session_state.df.drop(index=[del_emp])
-                    st.session_state.df = utils.recalculate_utilization(st.session_state.df)
-                    st.rerun()
                     
     with t3:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Add Program")
-            n_prog = st.text_input("New Program Name")
-            mrr_input = st.number_input("Program MRR ($)", min_value=0, value=0, step=1000)
-            if st.button("Add Program"):
-                if n_prog and n_prog not in st.session_state.df.columns:
-                    push_to_history()
-                    st.session_state.df[n_prog] = 0
-                    st.session_state.program_mrr[n_prog] = mrr_input
-                    st.session_state.df = utils.recalculate_utilization(st.session_state.df)
-                    st.rerun()
-        with c2:
-            st.subheader("Delete Program")
-            del_prog = st.selectbox("Select Program", ["Select..."] + sorted(prog_cols, key=str.casefold))
-            if st.button("Delete Program", type="primary"):
-                if del_prog != "Select...":
-                    push_to_history()
-                    st.session_state.df = st.session_state.df.drop(columns=[del_prog])
-                    if del_prog in st.session_state.program_mrr:
-                        del st.session_state.program_mrr[del_prog]
-                    st.session_state.df = utils.recalculate_utilization(st.session_state.df)
-                    st.rerun()
+        if df.empty:
+            st.warning("Please import data first.")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("Add Program")
+                n_prog = st.text_input("New Program Name")
+                mrr_input = st.number_input("Program MRR ($)", min_value=0, value=0, step=1000)
+                if st.button("Add Program"):
+                    if n_prog and n_prog not in st.session_state.df.columns:
+                        push_to_history()
+                        st.session_state.df[n_prog] = 0
+                        st.session_state.program_mrr[n_prog] = mrr_input
+                        st.session_state.df = utils.recalculate_utilization(st.session_state.df)
+                        st.rerun()
+            with c2:
+                st.subheader("Delete Program")
+                del_prog = st.selectbox("Select Program", ["Select..."] + sorted(prog_cols, key=str.casefold))
+                if st.button("Delete Program", type="primary"):
+                    if del_prog != "Select...":
+                        push_to_history()
+                        st.session_state.df = st.session_state.df.drop(columns=[del_prog])
+                        if del_prog in st.session_state.program_mrr:
+                            del st.session_state.program_mrr[del_prog]
+                        st.session_state.df = utils.recalculate_utilization(st.session_state.df)
+                        st.rerun()
