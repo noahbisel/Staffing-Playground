@@ -15,7 +15,6 @@ if 'undo_stack' not in st.session_state:
     st.session_state.undo_stack = []
 
 if 'df' not in st.session_state:
-    # START EMPTY - No Mock Data, No Default CSV auto-load
     st.session_state.df = pd.DataFrame()
 
 # --- 3. GLOBAL VARIABLES ---
@@ -31,15 +30,28 @@ if not df.empty:
 
 def render_employee_card(name, row):
     util = row.get('Current Hours to Target', 0)
+    cap = row.get('Capacity', utils.STANDARD_CAPACITY)
     role = row.get('Role', 'N/A')
+    
+    # Calculate Hours Breakdown
+    allocated_hours = int((util / 100) * cap)
+    unused_hours = int(cap - allocated_hours)
+    
     color = "green"
     if util > 100: color = "red"
     elif util < 80: color = "orange"
+    
     with st.container(border=True):
         c_head, c_badge = st.columns([3, 1])
-        c_head.markdown(f"**{name}**")
-        c_head.caption(role)
-        c_badge.markdown(f":{color}[**{util}%**]")
+        with c_head:
+            st.markdown(f"**{name}**")
+            st.caption(role)
+            # NEW: Hours Breakdown
+            st.markdown(f"Alloc: **{allocated_hours}** | Unused: **{unused_hours}**")
+        
+        with c_badge:
+            st.markdown(f":{color}[**{util}%**]")
+        
         st.progress(min(util, 100) / 100)
 
 def push_to_history():
@@ -65,18 +77,32 @@ if page == "📊 Dashboard":
     if not df.empty:
         # --- TOP METRICS ---
         team_util, team_alloc, team_cap = utils.calculate_group_utilization(df, utils.TEAM_ROLES)
+        team_unused = team_cap - team_alloc
+
         acp_util, acp_alloc, acp_cap = utils.calculate_group_utilization(df, ['ACP'])
+        acp_unused = acp_cap - acp_alloc
+        
         cp_util, cp_alloc, cp_cap = utils.calculate_group_utilization(df, ['CP', 'SCP', 'LCP'])
+        cp_unused = cp_cap - cp_alloc
+        
         ce_util, ce_alloc, ce_cap = utils.calculate_group_utilization(df, ['ACE', 'CE', 'SCE'])
+        ce_unused = ce_cap - ce_alloc
 
         m1, m2, m3, m4 = st.columns(4)
         with m1:
             with st.container(border=True):
                 st.metric("Team Avg Utilization", f"{team_util:.0f}%", delta=f"{team_util-100:.0f}%" if team_util > 100 else None)
-                st.caption(f"**Allocated:** {int(team_alloc)} hrs  \n**Capacity:** {int(team_cap)} hrs")
-        with m2: st.metric("ACP Utilization", f"{acp_util:.0f}%")
-        with m3: st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
-        with m4: st.metric("ACE/CE/SCE Util", f"{ce_util:.0f}%")
+                # UPDATED CAPTION
+                st.caption(f"Alloc: **{int(team_alloc)}** | Unused: **{int(team_unused)}**")
+        with m2: 
+            st.metric("ACP Utilization", f"{acp_util:.0f}%")
+            st.metric("ACP Unused Hours", f"{int(acp_unused)}") # Updated Label
+        with m3: 
+            st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
+            st.metric("CP/SCP/LCP Unused", f"{int(cp_unused)}")
+        with m4: 
+            st.metric("ACE/CE/SCE Util", f"{ce_util:.0f}%")
+            st.metric("ACE/CE/SCE Unused", f"{int(ce_unused)}")
 
         st.divider()
 
@@ -162,7 +188,6 @@ if page == "📊 Dashboard":
         """)
         
         if st.button("Go to Settings", type="primary"):
-            # A simple workaround to prompt user action or could be a direct link if deployed
             st.write("👈 Click 'Settings' in the left sidebar.")
 
 # --- PAGE: EDITOR ---
@@ -233,6 +258,11 @@ elif page == "✏️ Staffing Editor":
                             t_df = pd.DataFrame(df[prog])
                             t_df.columns = ['Hours']
                             if 'Role' in df.columns: t_df = t_df.join(df['Role'])
+                            
+                            # --- NEW: Add Utilization Column ---
+                            # Look up current utilizations for these employees
+                            t_df['Utilization'] = df.loc[t_df.index, 'Current Hours to Target']
+
                             active = t_df[t_df['Hours'] > 0].index.tolist()
                             to_edit = st.multiselect(f"Team for {prog}", sorted(df.index.tolist(), key=str.casefold), default=active, key=f"psel_{prog}")
                             
@@ -240,16 +270,30 @@ elif page == "✏️ Staffing Editor":
                                 t_df.loc[to_edit], use_container_width=True, 
                                 column_config={
                                     "Hours": st.column_config.NumberColumn(min_value=0), 
-                                    "Role": st.column_config.TextColumn(disabled=True)
-                                }, key=f"ped_{prog}"
+                                    "Role": st.column_config.TextColumn(disabled=True),
+                                    "Utilization": st.column_config.ProgressColumn(
+                                        "Utilization %", 
+                                        format="%d%%", 
+                                        min_value=0, 
+                                        max_value=100
+                                    )
+                                }, 
+                                disabled=["Utilization"], # Prevent editing utilization directly
+                                key=f"ped_{prog}"
                             )
-                            if not edited.equals(t_df.loc[to_edit]):
+                            
+                            # Check for changes (ignore Utilization column in comparison)
+                            edited_hours = edited[['Hours']]
+                            original_hours = t_df.loc[to_edit, ['Hours']]
+                            
+                            if not edited_hours['Hours'].equals(original_hours['Hours']):
                                 push_to_history()
                                 for emp, r in edited.iterrows():
                                     st.session_state.df.at[emp, prog] = r['Hours']
                                 st.session_state.df = utils.recalculate_utilization(st.session_state.df)
                                 st.rerun()
         else:
+            # Grid View (Same as before)
             c1, c2 = st.columns([2, 1])
             search = c1.text_input("🔍 Search", placeholder="Filter by name...")
             df_view = df.copy().sort_index(key=lambda x: x.str.lower())
