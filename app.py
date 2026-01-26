@@ -18,20 +18,17 @@ if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame()
 
 # --- NEW: NAVIGATION STATE MANAGEMENT ---
-# We need these to persist selections when switching views
 if 'editor_focus' not in st.session_state:
-    st.session_state.editor_focus = "People" # Default View
+    st.session_state.editor_focus = "People"
 if 'editor_selected_people' not in st.session_state:
     st.session_state.editor_selected_people = []
 if 'editor_selected_programs' not in st.session_state:
     st.session_state.editor_selected_programs = []
 
-# Helper functions to switch views
+# --- CALLBACK FUNCTIONS (Must run before re-render) ---
 def go_to_program(prog_name):
     st.session_state.editor_focus = "Programs"
     st.session_state.editor_selected_programs = [prog_name]
-    # No rerun needed here if called inside a button callback, 
-    # but strictly safe to let Streamlit handle the rerun cycle.
 
 def go_to_person(emp_name):
     st.session_state.editor_focus = "People"
@@ -53,7 +50,6 @@ def render_employee_card(name, row):
     cap = row.get('Capacity', utils.STANDARD_CAPACITY)
     role = row.get('Role', 'N/A')
     
-    # Calculate Hours Breakdown
     allocated_hours = int((util / 100) * cap)
     unused_hours = int(cap - allocated_hours)
     
@@ -67,10 +63,8 @@ def render_employee_card(name, row):
             st.markdown(f"**{name}**")
             st.caption(role)
             st.markdown(f"Alloc: **{allocated_hours}** | Unused: **{unused_hours}**")
-        
         with c_badge:
             st.markdown(f":{color}[**{util}%**]")
-        
         st.progress(min(util, 100) / 100)
 
 def push_to_history():
@@ -225,13 +219,12 @@ elif page == "✏️ Staffing Editor":
 
         if view == "Profile View (Detail)":
             # --- VIEW TOGGLE LOGIC ---
-            # We bind the Radio selection to our session state variable so programmatic changes update the UI
             focus = st.radio(
                 "Focus:", 
                 ["People", "Programs"], 
                 horizontal=True, 
                 label_visibility="collapsed",
-                key="editor_focus" # Binds this widget to st.session_state.editor_focus
+                key="editor_focus" # Linked to state
             )
             
             # --- PEOPLE VIEW ---
@@ -239,7 +232,6 @@ elif page == "✏️ Staffing Editor":
                 all_emps = sorted(df.index.astype(str), key=str.casefold)
                 filtered_emps = [e for e in all_emps if not str(df.loc[e, 'Role']).strip().upper().startswith("R+I")]
                 
-                # Use session state for the multiselect default
                 sel_emps = st.multiselect(
                     "Select Employees", 
                     filtered_emps, 
@@ -248,7 +240,7 @@ elif page == "✏️ Staffing Editor":
                     key="people_multiselect"
                 )
                 
-                # Sync selection back to state (if user manually changes it)
+                # Sync logic
                 if sel_emps != st.session_state.editor_selected_people:
                     st.session_state.editor_selected_people = sel_emps
 
@@ -263,15 +255,18 @@ elif page == "✏️ Staffing Editor":
                             
                             active = p_df[p_df['Hours'] > 0].index.tolist()
                             
-                            # --- NAVIGATION BUTTONS ---
+                            # --- NAVIGATION BUTTONS (Updated with on_click) ---
                             if active:
                                 st.caption("Jump to Program:")
-                                cols = st.columns(len(active) + 1) # +1 buffer
+                                cols = st.columns(len(active) + 1)
                                 for i, prog in enumerate(active):
-                                    # Create a unique key for every button
-                                    if cols[i].button(f"🔗 {prog}", key=f"btn_jump_prog_{name}_{prog}"):
-                                        go_to_program(prog)
-                                        st.rerun()
+                                    # Use on_click callback to update state safely
+                                    cols[i].button(
+                                        f"🔗 {prog}", 
+                                        key=f"btn_jump_prog_{name}_{prog}",
+                                        on_click=go_to_program,
+                                        args=(prog,)
+                                    )
                             
                             to_edit = st.multiselect(f"Programs for {name}", sorted(prog_cols, key=str.casefold), default=active, key=f"sel_{name}")
                             
@@ -291,7 +286,6 @@ elif page == "✏️ Staffing Editor":
 
             # --- PROGRAMS VIEW ---
             else:
-                # Use session state for the multiselect default
                 sel_progs = st.multiselect(
                     "Select Programs", 
                     sorted(prog_cols, key=str.casefold), 
@@ -300,7 +294,6 @@ elif page == "✏️ Staffing Editor":
                     key="program_multiselect"
                 )
                 
-                # Sync selection back to state
                 if sel_progs != st.session_state.editor_selected_programs:
                     st.session_state.editor_selected_programs = sel_progs
 
@@ -321,29 +314,28 @@ elif page == "✏️ Staffing Editor":
                             t_df.columns = ['Hours']
                             if 'Role' in df.columns: t_df = t_df.join(df['Role'])
                             
-                            # Add Utilization Column
                             t_df['Utilization'] = df.loc[t_df.index, 'Current Hours to Target']
                             active = t_df[t_df['Hours'] > 0].index.tolist()
-
-                            # --- NAVIGATION BUTTONS ---
-                            # Filter active list to exclude R+I or generic roles if you want, 
-                            # or keep all. Here we keep all valid employees in index.
                             valid_active = [p for p in active if p in df.index]
                             
+                            # --- NAVIGATION BUTTONS (Updated with on_click) ---
                             if valid_active:
                                 st.caption("Jump to Employee:")
-                                # Limit the number of buttons shown to avoid clutter if team is huge
                                 display_limit = 10 
                                 display_list = valid_active[:display_limit]
                                 
-                                cols = st.columns(min(len(display_list), 5)) # split into max 5 cols
+                                cols = st.columns(min(len(display_list), 5)) 
                                 for i, emp in enumerate(display_list):
                                     col_idx = i % 5
-                                    # Truncate long names for buttons
                                     short_name = (emp[:12] + '..') if len(emp) > 12 else emp
-                                    if cols[col_idx].button(f"👤 {short_name}", key=f"btn_jump_emp_{prog}_{emp}"):
-                                        go_to_person(emp)
-                                        st.rerun()
+                                    
+                                    # Use on_click callback here too
+                                    cols[col_idx].button(
+                                        f"👤 {short_name}", 
+                                        key=f"btn_jump_emp_{prog}_{emp}",
+                                        on_click=go_to_person,
+                                        args=(emp,)
+                                    )
                                 if len(valid_active) > display_limit:
                                     st.caption(f"...and {len(valid_active) - display_limit} others.")
 
