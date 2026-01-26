@@ -17,6 +17,26 @@ if 'undo_stack' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame()
 
+# --- NEW: NAVIGATION STATE MANAGEMENT ---
+# We need these to persist selections when switching views
+if 'editor_focus' not in st.session_state:
+    st.session_state.editor_focus = "People" # Default View
+if 'editor_selected_people' not in st.session_state:
+    st.session_state.editor_selected_people = []
+if 'editor_selected_programs' not in st.session_state:
+    st.session_state.editor_selected_programs = []
+
+# Helper functions to switch views
+def go_to_program(prog_name):
+    st.session_state.editor_focus = "Programs"
+    st.session_state.editor_selected_programs = [prog_name]
+    # No rerun needed here if called inside a button callback, 
+    # but strictly safe to let Streamlit handle the rerun cycle.
+
+def go_to_person(emp_name):
+    st.session_state.editor_focus = "People"
+    st.session_state.editor_selected_people = [emp_name]
+
 # --- 3. GLOBAL VARIABLES ---
 df = st.session_state.df
 prog_cols = []
@@ -46,7 +66,6 @@ def render_employee_card(name, row):
         with c_head:
             st.markdown(f"**{name}**")
             st.caption(role)
-            # NEW: Hours Breakdown
             st.markdown(f"Alloc: **{allocated_hours}** | Unused: **{unused_hours}**")
         
         with c_badge:
@@ -92,11 +111,10 @@ if page == "📊 Dashboard":
         with m1:
             with st.container(border=True):
                 st.metric("Team Avg Utilization", f"{team_util:.0f}%", delta=f"{team_util-100:.0f}%" if team_util > 100 else None)
-                # UPDATED CAPTION
                 st.caption(f"Alloc: **{int(team_alloc)}** | Unused: **{int(team_unused)}**")
         with m2: 
             st.metric("ACP Utilization", f"{acp_util:.0f}%")
-            st.metric("ACP Unused Hours", f"{int(acp_unused)}") # Updated Label
+            st.metric("ACP Unused Hours", f"{int(acp_unused)}")
         with m3: 
             st.metric("CP/SCP/LCP Utilization", f"{cp_util:.0f}%")
             st.metric("CP/SCP/LCP Unused", f"{int(cp_unused)}")
@@ -177,16 +195,13 @@ if page == "📊 Dashboard":
         render_role_column(t2, "CP / SCP / LCP", ['CP', 'SCP', 'LCP'])
         render_role_column(t3, "ACE / CE / SCE", ['ACE', 'CE', 'SCE'])
     else:
-        # --- EMPTY STATE INSTRUCTIONS ---
         st.info("👋 Welcome to the Staffing Sandbox! To begin, please import your data.")
-        
         st.markdown("""
         ### How to get started:
         1. Click **⚙️ Settings** in the sidebar.
         2. Go to the **Data Import** tab.
         3. Upload your staffing CSV file.
         """)
-        
         if st.button("Go to Settings", type="primary"):
             st.write("👈 Click 'Settings' in the left sidebar.")
 
@@ -209,13 +224,34 @@ elif page == "✏️ Staffing Editor":
         st.divider()
 
         if view == "Profile View (Detail)":
-            focus = st.radio("Focus:", ["People", "Programs"], horizontal=True, label_visibility="collapsed")
+            # --- VIEW TOGGLE LOGIC ---
+            # We bind the Radio selection to our session state variable so programmatic changes update the UI
+            focus = st.radio(
+                "Focus:", 
+                ["People", "Programs"], 
+                horizontal=True, 
+                label_visibility="collapsed",
+                key="editor_focus" # Binds this widget to st.session_state.editor_focus
+            )
             
+            # --- PEOPLE VIEW ---
             if focus == "People":
                 all_emps = sorted(df.index.astype(str), key=str.casefold)
                 filtered_emps = [e for e in all_emps if not str(df.loc[e, 'Role']).strip().upper().startswith("R+I")]
-                sel_emps = st.multiselect("Select Employees", filtered_emps, placeholder="Select people to edit...")
                 
+                # Use session state for the multiselect default
+                sel_emps = st.multiselect(
+                    "Select Employees", 
+                    filtered_emps, 
+                    default=[e for e in st.session_state.editor_selected_people if e in filtered_emps],
+                    placeholder="Select people to edit...",
+                    key="people_multiselect"
+                )
+                
+                # Sync selection back to state (if user manually changes it)
+                if sel_emps != st.session_state.editor_selected_people:
+                    st.session_state.editor_selected_people = sel_emps
+
                 if sel_emps:
                     for name in sel_emps:
                         if name in df.index:
@@ -224,7 +260,19 @@ elif page == "✏️ Staffing Editor":
                             p_df = pd.DataFrame(row[prog_cols])
                             p_df.columns = ['Hours']
                             p_df['Margin %'] = p_df.index.map(lambda x: margin_metrics.get(x, {}).get('margin_pct', 0.0))
+                            
                             active = p_df[p_df['Hours'] > 0].index.tolist()
+                            
+                            # --- NAVIGATION BUTTONS ---
+                            if active:
+                                st.caption("Jump to Program:")
+                                cols = st.columns(len(active) + 1) # +1 buffer
+                                for i, prog in enumerate(active):
+                                    # Create a unique key for every button
+                                    if cols[i].button(f"🔗 {prog}", key=f"btn_jump_prog_{name}_{prog}"):
+                                        go_to_program(prog)
+                                        st.rerun()
+                            
                             to_edit = st.multiselect(f"Programs for {name}", sorted(prog_cols, key=str.casefold), default=active, key=f"sel_{name}")
                             
                             edited = st.data_editor(
@@ -241,14 +289,28 @@ elif page == "✏️ Staffing Editor":
                                 st.session_state.df = utils.recalculate_utilization(st.session_state.df)
                                 st.rerun()
 
+            # --- PROGRAMS VIEW ---
             else:
-                sel_progs = st.multiselect("Select Programs", sorted(prog_cols, key=str.casefold), placeholder="Select programs...")
+                # Use session state for the multiselect default
+                sel_progs = st.multiselect(
+                    "Select Programs", 
+                    sorted(prog_cols, key=str.casefold), 
+                    default=[p for p in st.session_state.editor_selected_programs if p in prog_cols],
+                    placeholder="Select programs...",
+                    key="program_multiselect"
+                )
+                
+                # Sync selection back to state
+                if sel_progs != st.session_state.editor_selected_programs:
+                    st.session_state.editor_selected_programs = sel_progs
+
                 if sel_progs:
                     for prog in sel_progs:
                         total = df[prog].sum()
                         m_data = margin_metrics.get(prog, {})
                         margin_pct_disp = m_data.get('margin_pct', 0)
                         mrr = m_data.get('mrr', 0)
+                        
                         with st.container(border=True):
                             st.subheader(f"{prog} (MRR: ${mrr:,.0f})")
                             c1, c2 = st.columns(2)
@@ -259,11 +321,32 @@ elif page == "✏️ Staffing Editor":
                             t_df.columns = ['Hours']
                             if 'Role' in df.columns: t_df = t_df.join(df['Role'])
                             
-                            # --- NEW: Add Utilization Column ---
-                            # Look up current utilizations for these employees
+                            # Add Utilization Column
                             t_df['Utilization'] = df.loc[t_df.index, 'Current Hours to Target']
-
                             active = t_df[t_df['Hours'] > 0].index.tolist()
+
+                            # --- NAVIGATION BUTTONS ---
+                            # Filter active list to exclude R+I or generic roles if you want, 
+                            # or keep all. Here we keep all valid employees in index.
+                            valid_active = [p for p in active if p in df.index]
+                            
+                            if valid_active:
+                                st.caption("Jump to Employee:")
+                                # Limit the number of buttons shown to avoid clutter if team is huge
+                                display_limit = 10 
+                                display_list = valid_active[:display_limit]
+                                
+                                cols = st.columns(min(len(display_list), 5)) # split into max 5 cols
+                                for i, emp in enumerate(display_list):
+                                    col_idx = i % 5
+                                    # Truncate long names for buttons
+                                    short_name = (emp[:12] + '..') if len(emp) > 12 else emp
+                                    if cols[col_idx].button(f"👤 {short_name}", key=f"btn_jump_emp_{prog}_{emp}"):
+                                        go_to_person(emp)
+                                        st.rerun()
+                                if len(valid_active) > display_limit:
+                                    st.caption(f"...and {len(valid_active) - display_limit} others.")
+
                             to_edit = st.multiselect(f"Team for {prog}", sorted(df.index.tolist(), key=str.casefold), default=active, key=f"psel_{prog}")
                             
                             edited = st.data_editor(
@@ -278,11 +361,10 @@ elif page == "✏️ Staffing Editor":
                                         max_value=100
                                     )
                                 }, 
-                                disabled=["Utilization"], # Prevent editing utilization directly
+                                disabled=["Utilization"], 
                                 key=f"ped_{prog}"
                             )
                             
-                            # Check for changes (ignore Utilization column in comparison)
                             edited_hours = edited[['Hours']]
                             original_hours = t_df.loc[to_edit, ['Hours']]
                             
@@ -293,7 +375,7 @@ elif page == "✏️ Staffing Editor":
                                 st.session_state.df = utils.recalculate_utilization(st.session_state.df)
                                 st.rerun()
         else:
-            # Grid View (Same as before)
+            # GRID VIEW
             c1, c2 = st.columns([2, 1])
             search = c1.text_input("🔍 Search", placeholder="Filter by name...")
             df_view = df.copy().sort_index(key=lambda x: x.str.lower())
