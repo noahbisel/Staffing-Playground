@@ -138,7 +138,7 @@ if page == "📊 Dashboard":
 
         # --- LEFT: ALLOCATIONS BY PROGRAM ---
         with col_left:
-            st.markdown("&nbsp;", unsafe_allow_html=True)
+            st.markdown("<div style='margin-bottom: 2.1rem'></div>", unsafe_allow_html=True)
             st.subheader("Allocations by Program")
 
             if prog_cols:
