@@ -138,7 +138,6 @@ if page == "📊 Dashboard":
 
         # --- LEFT: ALLOCATIONS BY PROGRAM ---
         with col_left:
-            st.markdown("<div style='margin-bottom: 2.1rem'></div>", unsafe_allow_html=True)
             st.subheader("Allocations by Program")
 
             if prog_cols:
@@ -172,8 +171,9 @@ if page == "📊 Dashboard":
         # --- RIGHT: ALLOCATIONS BY EMPLOYEE ---
         with col_right:
             toggle_col_ri, toggle_col_csm = st.columns(2)
-            include_ri = toggle_col_ri.toggle("Include R+I Roles?", value=False)
-            include_csm = toggle_col_csm.toggle("Include CSM Roles?", value=False)
+            include_ri = toggle_col_ri.toggle("Include R+I Roles?", value=True)
+            include_csm = toggle_col_csm.toggle("Include CSM Roles?", value=True)
+
             st.subheader("Allocations by Employee")
 
             emp_view_df = df.copy()
