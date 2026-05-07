@@ -134,11 +134,16 @@ if page == "📊 Dashboard":
 
         st.divider()
 
+        header_left, header_right_label, header_right_t1, header_right_t2 = st.columns([3, 1, 1, 1])
+        header_left.subheader("Allocations by Program")
+        header_right_label.subheader("Allocations by Employee")
+        include_ri = header_right_t1.toggle("Include R+I Roles?", value=False)
+        include_csm = header_right_t2.toggle("Include CSM Roles?", value=False)
+
         col_left, col_right = st.columns(2)
 
         # --- LEFT: ALLOCATIONS BY PROGRAM ---
         with col_left:
-            st.subheader("Allocations by Program")
 
             if prog_cols:
                 master_data = []
@@ -170,11 +175,6 @@ if page == "📊 Dashboard":
 
         # --- RIGHT: ALLOCATIONS BY EMPLOYEE ---
         with col_right:
-            toggle_col_ri, toggle_col_csm = st.columns(2)
-            include_ri = toggle_col_ri.toggle("Include R+I Roles?", value=True)
-            include_csm = toggle_col_csm.toggle("Include CSM Roles?", value=True)
-
-            st.subheader("Allocations by Employee")
 
             emp_view_df = df.copy()
             if 'Role' in emp_view_df.columns:
